@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+.env
+
+# dataset is 2.3 GB and downloadable; keep band_stats.json, which inference needs
+data/raw/
+data/extracted/
+
+# model weights are ~100 MB (GitHub's per-file limit)
+models/*.pt
+
+frontend/node_modules/
+frontend/dist/
