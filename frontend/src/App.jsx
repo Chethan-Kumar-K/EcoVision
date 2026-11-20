@@ -1,13 +1,13 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import "./App.css";
-
-const API = "http://localhost:8000";
+import { readGeoTiff, runModel, render } from "./forest";
 
 export default function App() {
   const [file, setFile] = useState(null);
   const [threshold, setThreshold] = useState(0.5);
-  const [result, setResult] = useState(null);
+  const [raw, setRaw] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [view, setView] = useState("side");
   const [opacity, setOpacity] = useState(0.55);
@@ -15,24 +15,32 @@ export default function App() {
   const inputRef = useRef(null);
   const latest = useRef(0);
 
-  async function run(f, t) {
+  const result = useMemo(() => (raw ? render(raw, threshold) : null), [raw, threshold]);
+
+  async function analyze(f) {
     const id = ++latest.current;
     setLoading(true);
     setError("");
-    const form = new FormData();
-    form.append("file", f);
+    setStatus("Reading file...");
     try {
-      const res = await fetch(`${API}/predict?threshold=${t}`, { method: "POST", body: form });
-      const data = await res.json();
-      if (id !== latest.current) return;   // a newer request replaced this one
-      if (!res.ok) throw new Error(data.detail || "Request failed");
-      setResult(data);
+      const parsed = await readGeoTiff(f);
+      if (parsed.bands !== 4) throw new Error(`Expected 4 bands (R, G, B, NIR), got ${parsed.bands}.`);
+      if (parsed.max <= 255) throw new Error("Values look 8-bit. Expected raw Sentinel-2 L2A reflectance x 10000.");
+      setStatus("Loading model (the first time downloads about 100 MB)...");
+      const out = await runModel(parsed, (p) => {
+        if (id === latest.current) setStatus(`Running model... ${p}`);
+      });
+      if (id !== latest.current) return;
+      setRaw(out);
     } catch (e) {
       if (id !== latest.current) return;
-      setResult(null);
-      setError(e.message === "Failed to fetch" ? "Cannot reach the API. Is the backend running on port 8000?" : e.message);
+      setRaw(null);
+      setError(e.message || String(e));
     } finally {
-      if (id === latest.current) setLoading(false);
+      if (id === latest.current) {
+        setLoading(false);
+        setStatus("");
+      }
     }
   }
 
@@ -43,7 +51,7 @@ export default function App() {
       return;
     }
     setFile(f);
-    run(f, threshold);
+    analyze(f);
   }
 
   function onDrop(e) {
@@ -52,15 +60,11 @@ export default function App() {
     pick(e.dataTransfer.files[0]);
   }
 
-  function onRelease() {
-    if (file) run(file, threshold);
-  }
-
   return (
     <div className="app">
       <header className="header">
         <div className="logo">EcoVision</div>
-        <span className="tag">Forest detection from Sentinel-2</span>
+        <span className="tag">Forest detection from Sentinel-2, running in your browser</span>
       </header>
 
       <main className="page">
@@ -85,14 +89,13 @@ export default function App() {
             <input
               type="range" min="0.1" max="0.9" step="0.05" value={threshold}
               onChange={(e) => setThreshold(Number(e.target.value))}
-              onPointerUp={onRelease} onKeyUp={onRelease}
             />
           </label>
-          <p className="hint">Lower finds more forest, higher is stricter. Updates when you release the slider.</p>
+          <p className="hint">Lower finds more forest, higher is stricter.</p>
         </section>
 
         {error && <div className="error">{error}</div>}
-        {loading && <div className="loading"><span className="spinner" /> Running model...</div>}
+        {loading && <div className="loading"><span className="spinner" /> {status}</div>}
 
         {result && (
           <section className={loading ? "results dim" : "results"}>
